@@ -4,12 +4,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 public class Order {
-    public enum orderStatus {
-        PENDING,
-        PARTLY_FILL,
-        FILL,
-        CANCELED
-    }
     public enum orderDirection {
         BUY,
         SELL
@@ -18,25 +12,23 @@ public class Order {
         MARKET,
         LIMIT
     }
-    private final int id;
+    public static final int SCALE = 3;
+    private final long id;
     private int quantity;
     private final orderDirection direction;
     private final orderType type;
-    private BigDecimal price;
-    public Order(int id, int quantity, orderDirection direction, orderType type, double price) {
+    private final BigDecimal price;
+    public Order(long id, int quantity, orderDirection direction, orderType type, double price) {
         this.id = id;
         this.quantity = quantity;
         this.direction = direction;
         this.type = type;
-        this.price = new BigDecimal(price).setScale(3, RoundingMode.HALF_UP);
+        this.price = BigDecimal.valueOf(price).setScale(SCALE, RoundingMode.HALF_UP);
     }
-    public void setQuantity(int quantity) {
-        this.quantity = quantity;
+    public void reduceQuantity(int quantity) {
+        this.quantity -= quantity;
     }
-    public void setPrice(double price) {
-        this.price = BigDecimal.valueOf(price);
-    }
-    public int getId() {
+    public long getId() {
         return this.id;
     }
     public int getQuantity() {
@@ -48,7 +40,10 @@ public class Order {
     public orderType getType() {
         return this.type;
     }
-    public double getPrice() {
-        return this.price.doubleValue();
+    public BigDecimal getPrice() {
+        return this.price;
+    }
+    public static BigDecimal round(BigDecimal val) {
+        return val.setScale(SCALE, RoundingMode.HALF_UP);
     }
 }
