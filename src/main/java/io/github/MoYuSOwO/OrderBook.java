@@ -14,7 +14,7 @@ public class OrderBook {
         void onOrderCanceled(long id);
     }
     private Thread matchingThread;
-    private volatile boolean running = false;
+    private volatile boolean running;
     private final AtomicLong idGenerator = new AtomicLong(0);
     private final TreeSet<Order> buyOrders;
     private final TreeSet<Order> sellOrders;
@@ -42,8 +42,9 @@ public class OrderBook {
         this.orderQueue = new LinkedBlockingQueue<>();
         this.isOrderCanceled = new ConcurrentHashMap<>();
         this.listeners = new ArrayList<>();
+        this.running = false;
         this.currentPrice = BigDecimal.valueOf(currentPrice);
-        start();
+        this.start();
     }
     public void start() {
         if (this.running) return;
@@ -53,10 +54,12 @@ public class OrderBook {
                 try {
                     this.handleNextOrder();
                 } catch (Exception e) {
+                    System.out.println(e.getMessage());
                     Thread.currentThread().interrupt();
                 }
             }
         });
+        this.matchingThread.start();
     }
     public void stop() {
         if (!this.running) return;
@@ -79,9 +82,22 @@ public class OrderBook {
     public BigDecimal getCurrentPrice() {
         return this.currentPrice;
     }
+    public void _printOrderBook_() {
+        System.out.println("Buy:");
+        for (Order order : this.buyOrders) {
+            System.out.println(Long.toString(order.getId()) + " " + Long.toString(order.getQuantity()) + " " + order.getPrice().toString());
+        }
+        System.out.println("Sell:");
+        for (Order order : this.sellOrders) {
+            System.out.println(Long.toString(order.getId()) + " " + Long.toString(order.getQuantity()) + " " + order.getPrice().toString());
+        }
+    }
     private void handleNextOrder() throws Exception {
         Order order = this.orderQueue.take();
-        if (this.isOrderCanceled.containsKey(order.getId())) return;
+        if (this.isOrderCanceled.containsKey(order.getId())) {
+            this.isOrderCanceled.remove(order.getId());
+            return;
+        }
         if (order.getType() == Order.orderType.LIMIT) this.handleLimitOrder(order);
         else if (order.getType() == Order.orderType.MARKET) this.handleMarketOrder(order);
     }
@@ -101,7 +117,7 @@ public class OrderBook {
                     this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
                     this.currentPrice = filledPrice;
                     if (first.getQuantity() > 0) {
-                        this.buyOrders.add(first);
+                        this.sellOrders.add(first);
                     }
                     return;
                 }
@@ -113,6 +129,9 @@ public class OrderBook {
                     this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
                     this.currentPrice = filledPrice;
                 }
+            }
+            if (this.sellOrders.isEmpty()) {
+                this.sellOrders.add(order);
             }
         }
         else if (order.getDirection() == Order.orderDirection.SELL) {
@@ -143,6 +162,9 @@ public class OrderBook {
                     this.currentPrice = filledPrice;
                 }
             }
+            if (this.buyOrders.isEmpty()) {
+                this.sellOrders.add(order);
+            }
         }
     }
     private void handleLimitOrder(Order order) {
@@ -155,6 +177,7 @@ public class OrderBook {
                 }
                 if (first.getPrice().compareTo(order.getPrice()) > 0) {
                     this.buyOrders.add(order);
+                    this.sellOrders.add(first);
                     return;
                 }
                 else if (first.getQuantity() >= order.getQuantity()) {
@@ -177,6 +200,9 @@ public class OrderBook {
                     this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
                 }
             }
+            if (this.sellOrders.isEmpty()) {
+                this.buyOrders.add(order);
+            }
         }
         else if (order.getDirection() == Order.orderDirection.SELL) {
             while (!this.buyOrders.isEmpty()) {
@@ -187,6 +213,7 @@ public class OrderBook {
                 }
                 if (first.getPrice().compareTo(order.getPrice()) < 0) {
                     this.sellOrders.add(order);
+                    this.buyOrders.add(first);
                     return;
                 }
                 else if (first.getQuantity() >= order.getQuantity()) {
@@ -209,6 +236,9 @@ public class OrderBook {
                     this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
                     this.currentPrice = filledPrice;
                 }
+            }
+            if (this.buyOrders.isEmpty()) {
+                this.sellOrders.add(order);
             }
         }
     }

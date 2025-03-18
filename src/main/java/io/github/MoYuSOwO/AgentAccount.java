@@ -45,11 +45,20 @@ public class AgentAccount implements OrderBook.OrderListener {
     }
     @Override
     public void onOrderCanceled(long id) {
-        if (this.orders.get(id) == null) {
-            return;
-        }
-        else {
+        if (this.orders.get(id) != null) {
             this.orders.remove(id);
         }
+    }
+    public void addOrder(Order order) {
+        this.orders.put(order.getId(), order);
+    }
+    public BigDecimal getCash() {
+        return this.cash;
+    }
+    public int getPosition() {
+        return this.position;
+    }
+    public BigDecimal getCostPerPosition() {
+        return this.costPerPosition;
     }
 }

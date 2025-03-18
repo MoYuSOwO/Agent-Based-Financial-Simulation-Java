@@ -1,5 +1,6 @@
 package io.github.MoYuSOwO;
 
+import javax.swing.event.ListSelectionListener;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
@@ -45,5 +46,13 @@ public class Order {
     }
     public static BigDecimal round(BigDecimal val) {
         return val.setScale(SCALE, RoundingMode.HALF_UP);
+    }
+    public static orderDirection toOrderDirection(String s) {
+        if (s.equals("BUY")) return orderDirection.BUY;
+        else return orderDirection.SELL;
+    }
+    public static orderType toOrderType(String s) {
+        if (s.equals("MARKET")) return orderType.MARKET;
+        else return orderType.LIMIT;
     }
 }
