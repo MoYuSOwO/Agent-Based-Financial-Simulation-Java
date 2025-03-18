@@ -1,19 +1,31 @@
-package io.github.MoYuSOwO;
+package io.github.MoYuSOwO.agent;
+
+import io.github.MoYuSOwO.EventBus;
+import io.github.MoYuSOwO.stock.Order;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashMap;
 
-public class AgentAccount implements OrderBook.OrderListener {
+public class AgentAccount implements EventBus.OrderStatusListener {
+    private static int nextAccountId = 0;
+    private final int accountId;
     private BigDecimal cash;
     private int position;
     private BigDecimal costPerPosition;
     private final HashMap<Long, Order> orders;
-    public AgentAccount(double cash, int position, double costPerPosition) {
+    private final EventBus.OrderSubmitListener listener;
+    public AgentAccount(double cash, int position, double costPerPosition, EventBus.OrderSubmitListener listener) {
+        this.accountId = nextAccountId++;
         this.cash = BigDecimal.valueOf(cash).setScale(Order.SCALE, RoundingMode.HALF_UP);
         this.position = position;
         this.costPerPosition = BigDecimal.valueOf(costPerPosition).setScale(Order.SCALE, RoundingMode.HALF_UP);
         this.orders = new HashMap<>();
+        this.listener = listener;
+    }
+    @Override
+    public void onOrderAccepted(Order order) {
+        this.orders.put(order.getId(), order);
     }
     @Override
     public void onOrderFilled(long id, int filledQuantity, BigDecimal filledPrice) {
@@ -49,8 +61,17 @@ public class AgentAccount implements OrderBook.OrderListener {
             this.orders.remove(id);
         }
     }
-    public void addOrder(Order order) {
-        this.orders.put(order.getId(), order);
+    public void addOrder(int quantity, Order.orderDirection direction, double price) {
+        listener.onOrderSubmitted(this.accountId, quantity, direction, price);
+    }
+    public void addOrder(int quantity, Order.orderDirection direction, BigDecimal price) {
+        listener.onOrderSubmitted(this.accountId, quantity, direction, price);
+    }
+    public void addOrder(int quantity, Order.orderDirection direction) {
+        listener.onOrderSubmitted(this.accountId, quantity, direction);
+    }
+    public int getAccountId() {
+        return this.accountId;
     }
     public BigDecimal getCash() {
         return this.cash;

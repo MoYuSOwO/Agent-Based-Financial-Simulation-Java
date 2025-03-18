@@ -1,18 +1,16 @@
-package io.github.MoYuSOwO;
+package io.github.MoYuSOwO.stock;
+
+import io.github.MoYuSOwO.EventBus;
 
 import java.math.BigDecimal;
 import java.util.Comparator;
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class OrderBook {
-    public interface OrderListener {
-        void onOrderFilled(long id, int filledQuantity, BigDecimal filledPrice);
-        void onOrderCanceled(long id);
-    }
+public class OrderBook implements EventBus.OrderSubmitListener {
     private Thread matchingThread;
     private volatile boolean running;
     private final AtomicLong idGenerator = new AtomicLong(0);
@@ -20,8 +18,8 @@ public class OrderBook {
     private final TreeSet<Order> sellOrders;
     private final LinkedBlockingQueue<Order> orderQueue;
     private final ConcurrentHashMap<Long, Boolean> isOrderCanceled;
-    private final ArrayList<OrderListener> listeners;
-    private volatile BigDecimal currentPrice;
+    private final HashMap<Integer, EventBus.OrderStatusListener> listeners;
+    private final OrderData data;
     public OrderBook(double currentPrice) {
         Comparator<Order> buyComparator = (o1, o2) -> {
             int cmpPrice = o2.getPrice().compareTo(o1.getPrice());
@@ -41,9 +39,9 @@ public class OrderBook {
         this.sellOrders = new TreeSet<>(sellComparator);
         this.orderQueue = new LinkedBlockingQueue<>();
         this.isOrderCanceled = new ConcurrentHashMap<>();
-        this.listeners = new ArrayList<>();
+        this.listeners = new HashMap<>();
         this.running = false;
-        this.currentPrice = BigDecimal.valueOf(currentPrice);
+        this.data = new OrderData(currentPrice);
         this.start();
     }
     public void start() {
@@ -68,19 +66,11 @@ public class OrderBook {
             this.matchingThread.interrupt();
         }
     }
-    public void addListener(OrderListener listener) {
-        this.listeners.add(listener);
-    }
-    public Order addOrder(int quantity, Order.orderDirection direction, Order.orderType type, double price) {
-        Order order = new Order(this.idGenerator.getAndIncrement(), quantity, direction, type, price);
-        this.orderQueue.offer(order);
-        return order;
+    public void addListener(int accountId, EventBus.OrderStatusListener listener) {
+        this.listeners.put(accountId, listener);
     }
     public void cancelOrder(long id) {
         this.isOrderCanceled.put(id, true);
-    }
-    public BigDecimal getCurrentPrice() {
-        return this.currentPrice;
     }
     public void _printOrderBook_() {
         System.out.println("Buy:");
@@ -98,6 +88,7 @@ public class OrderBook {
             this.isOrderCanceled.remove(order.getId());
             return;
         }
+        this.sendOrderAccepted(order);
         if (order.getType() == Order.orderType.LIMIT) this.handleLimitOrder(order);
         else if (order.getType() == Order.orderType.MARKET) this.handleMarketOrder(order);
     }
@@ -107,15 +98,20 @@ public class OrderBook {
                 Order first = this.sellOrders.pollFirst();
                 if (this.isOrderCanceled.containsKey(first.getId())) {
                     this.isOrderCanceled.remove(first.getId());
+                    continue;
+                }
+                if (first.getAccountId() == order.getAccountId()) {
+                    this.sendOrderCanceled(first.getId(), first.getAccountId());
+                    this.sellOrders.add(first);
                     return;
                 }
                 if (first.getQuantity() >= order.getQuantity()) {
                     int filledQuantity = order.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     first.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
-                    this.currentPrice = filledPrice;
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
+                    this.updatePrice(filledPrice);
                     if (first.getQuantity() > 0) {
                         this.sellOrders.add(first);
                     }
@@ -125,29 +121,32 @@ public class OrderBook {
                     int filledQuantity = first.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     order.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
-                    this.currentPrice = filledPrice;
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
+                    this.updatePrice(filledPrice);
                 }
             }
-            if (this.sellOrders.isEmpty()) {
-                this.sellOrders.add(order);
-            }
+            this.sendOrderCanceled(order.getId(), order.getAccountId());
         }
         else if (order.getDirection() == Order.orderDirection.SELL) {
             while (!this.buyOrders.isEmpty()) {
                 Order first = this.buyOrders.pollFirst();
                 if (this.isOrderCanceled.containsKey(first.getId())) {
                     this.isOrderCanceled.remove(first.getId());
+                    continue;
+                }
+                if (first.getAccountId() == order.getAccountId()) {
+                    this.sendOrderCanceled(first.getId(), first.getAccountId());
+                    this.buyOrders.add(first);
                     return;
                 }
                 if (first.getQuantity() >= order.getQuantity()) {
                     int filledQuantity = order.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     first.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
-                    this.currentPrice = filledPrice;
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
+                    this.updatePrice(filledPrice);
                     if (first.getQuantity() > 0) {
                         this.buyOrders.add(first);
                     }
@@ -157,14 +156,12 @@ public class OrderBook {
                     int filledQuantity = first.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     order.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
-                    this.currentPrice = filledPrice;
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
+                    this.updatePrice(filledPrice);
                 }
             }
-            if (this.buyOrders.isEmpty()) {
-                this.sellOrders.add(order);
-            }
+            this.sendOrderCanceled(order.getId(), order.getAccountId());
         }
     }
     private void handleLimitOrder(Order order) {
@@ -173,6 +170,11 @@ public class OrderBook {
                 Order first = this.sellOrders.pollFirst();
                 if (this.isOrderCanceled.containsKey(first.getId())) {
                     this.isOrderCanceled.remove(first.getId());
+                    continue;
+                }
+                if (first.getAccountId() == order.getAccountId()) {
+                    this.sendOrderCanceled(first.getId(), first.getAccountId());
+                    this.sellOrders.add(first);
                     return;
                 }
                 if (first.getPrice().compareTo(order.getPrice()) > 0) {
@@ -184,9 +186,9 @@ public class OrderBook {
                     int filledQuantity = order.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     first.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
-                    this.currentPrice = filledPrice;
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
+                    this.updatePrice(filledPrice);
                     if (first.getQuantity() > 0) {
                         this.sellOrders.add(first);
                     }
@@ -196,19 +198,22 @@ public class OrderBook {
                     int filledQuantity = first.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     order.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
                 }
             }
-            if (this.sellOrders.isEmpty()) {
-                this.buyOrders.add(order);
-            }
+            this.buyOrders.add(order);
         }
         else if (order.getDirection() == Order.orderDirection.SELL) {
             while (!this.buyOrders.isEmpty()) {
                 Order first = this.buyOrders.pollFirst();
                 if (this.isOrderCanceled.containsKey(first.getId())) {
                     this.isOrderCanceled.remove(first.getId());
+                    return;
+                }
+                if (first.getAccountId() == order.getAccountId()) {
+                    this.sendOrderCanceled(first.getId(), first.getAccountId());
+                    this.buyOrders.add(first);
                     return;
                 }
                 if (first.getPrice().compareTo(order.getPrice()) < 0) {
@@ -220,9 +225,9 @@ public class OrderBook {
                     int filledQuantity = order.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     first.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
-                    this.currentPrice = filledPrice;
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
+                    this.updatePrice(filledPrice);
                     if (first.getQuantity() > 0) {
                         this.buyOrders.add(first);
                     }
@@ -232,24 +237,41 @@ public class OrderBook {
                     int filledQuantity = first.getQuantity();
                     BigDecimal filledPrice = Order.round(first.getPrice());
                     order.reduceQuantity(filledQuantity);
-                    this.sendOrderFilled(first.getId(), filledQuantity, filledPrice);
-                    this.sendOrderFilled(order.getId(), filledQuantity, filledPrice);
-                    this.currentPrice = filledPrice;
+                    this.sendOrderFilled(first.getId(), first.getAccountId(), filledQuantity, filledPrice);
+                    this.sendOrderFilled(order.getId(), order.getAccountId(), filledQuantity, filledPrice);
+                    this.updatePrice(filledPrice);
                 }
             }
-            if (this.buyOrders.isEmpty()) {
-                this.sellOrders.add(order);
-            }
+            this.sellOrders.add(order);
         }
     }
-    private void sendOrderFilled(long id, int filledQuantity, BigDecimal filledPrice) {
-        for (OrderListener listener : listeners) {
-            listener.onOrderFilled(id, filledQuantity, filledPrice);
-        }
+    private void updatePrice(BigDecimal price) {
+        data.updatePrice(price);
     }
-    private void sendOrderCanceled(long id) {
-        for (OrderListener listener : listeners) {
-            listener.onOrderCanceled(id);
-        }
+    private void sendOrderAccepted(Order order) {
+        this.listeners.get(order.getAccountId()).onOrderAccepted(order.copy());
+    }
+    private void sendOrderFilled(long id, int accountId, int filledQuantity, BigDecimal filledPrice) {
+        this.listeners.get(accountId).onOrderFilled(id, filledQuantity, filledPrice);
+    }
+    private void sendOrderCanceled(long id, int accountId) {
+        this.listeners.get(accountId).onOrderCanceled(id);
+    }
+    @Override
+    public void onOrderSubmitted(int accountId, int quantity, Order.orderDirection direction, double price) {
+        Order order = new Order(this.idGenerator.getAndIncrement(), accountId, quantity, direction, price);
+        this.orderQueue.offer(order);
+    }
+
+    @Override
+    public void onOrderSubmitted(int accountId, int quantity, Order.orderDirection direction, BigDecimal price) {
+        Order order = new Order(this.idGenerator.getAndIncrement(), accountId, quantity, direction, price);
+        this.orderQueue.offer(order);
+    }
+
+    @Override
+    public void onOrderSubmitted(int accountId, int quantity, Order.orderDirection direction) {
+        Order order = new Order(this.idGenerator.getAndIncrement(), accountId, quantity, direction);
+        this.orderQueue.offer(order);
     }
 }
