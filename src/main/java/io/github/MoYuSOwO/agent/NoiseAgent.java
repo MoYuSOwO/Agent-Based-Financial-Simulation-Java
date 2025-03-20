@@ -2,7 +2,6 @@ package io.github.MoYuSOwO.agent;
 
 import io.github.MoYuSOwO.EventBus;
 import io.github.MoYuSOwO.stock.Order;
-
 import java.math.BigDecimal;
 
 public class NoiseAgent extends Agent {
